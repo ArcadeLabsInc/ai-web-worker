@@ -1,16 +1,16 @@
-import WebSocket from 'ws';
-import ChatModule from "@mlc-ai/web-llm";
+global.WebSocket = global.WebSocket || global.MozWebSocket || require('ws');
+
+import * as webllm from "@mlc-ai/web-llm";
 
 // AiWorker.ts
 type Config = {
   spiderURL: string;
-  initMessage: string;
   [key: string]: any;
 };
 
 type Callbacks = {
   jobStart?: () => void;
-  jobDone?: () => void;
+  jobDone?: (status: {error: string | null, secs: number}) => void;
   connect?: () => void;
   disconnect?: () => void;
   [key: string]: any;
@@ -20,13 +20,13 @@ class AiWorker {
   private websocket: WebSocket | null = null;
   private config: Config;
   private callbacks: Callbacks = {};
-  chat: ChatModule;
+  chat: webllm.ChatModule;
   model: any;
 
   constructor(config: Config) {
     this.config = config;
     this.connect();
-    this.chat = new ChatModule();
+    this.chat = new webllm.ChatModule();
     this.chat.setInitProgressCallback((report: any)=>{
         console.log("init", report)
     })
@@ -95,16 +95,22 @@ class AiWorker {
   private connect() {
     this.websocket = new WebSocket(this.config.spiderURL);
     this.websocket.addEventListener("open", () => {
-      this.websocket?.send(JSON.stringify({ type: "init", message: this.initMessage() }));
+      this.websocket?.send(JSON.stringify(this.initMessage()));
       this.callbacks.connect?.();
     });
 
     this.websocket.addEventListener("message", async (event: any) => {
       const data = JSON.parse(event.data);
       if (data.openai_req) {
+        const start = performance.now()
+        let err: string | null = null
         this.callbacks.jobStart?.();
-        await this.handleOpenAiReq(data.openai_req)
-        this.callbacks.jobDone?.();
+        try {
+          await this.handleOpenAiReq(data.openai_req)
+        } catch {
+          err = "ai generator failed"
+        }
+        this.callbacks.jobDone?.({error: err, secs: performance.now()-start});
       }
     });
 
